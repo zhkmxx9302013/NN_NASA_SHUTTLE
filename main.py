@@ -2,7 +2,8 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 
-is_train_option = False#True #global training identifier. Used for judging whether this is a training process or not.
+is_train_option = True
+#True #global training identifier. Used for judging whether this is a training process or not.
 
 label_num = 7  # 7 is output labels size
 attr_num = 8  # 8 is the attrs size, without the 'TIME'
@@ -78,7 +79,7 @@ def nn_process_diagram(_saver, _graph, _optimizer, _loss, weights, biases,_train
                        _train_data_set, _train_label_set, _tf_train_dataset, _tf_train_labels, _lambda_regular):
     """Process the tensorflow diagram."""
 
-    checkpoint_dir = './'
+    checkpoint_dir = './checkpoint/'
 
     with tf.Session(graph=_graph) as session:
         tf.global_variables_initializer().run()
