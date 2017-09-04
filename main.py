@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 
+is_train_option = False#True #global training identifier. Used for judging whether this is a training process or not.
+
 label_num = 7  # 7 is output labels size
 attr_num = 8  # 8 is the attrs size, without the 'TIME'
 
@@ -67,31 +69,47 @@ def nn_diagram_define(_cv_data_set, _test_data_set):
         _cv_prediction = tf.nn.softmax(tf.matmul(tf_cv_dataset, weights) + biases)
         _test_prediction = tf.nn.softmax(tf.matmul(tf_test_dataset, weights) + biases)
 
-        return _graph, _optimizer, _loss, weights, biases, _train_prediction, _cv_prediction, _test_prediction, _tf_train_dataset, _tf_train_labels, _lambda_regular
+        _saver = tf.train.Saver()
+
+        return _saver, _graph, _optimizer, _loss, weights, biases, _train_prediction, _cv_prediction, _test_prediction, _tf_train_dataset, _tf_train_labels, _lambda_regular
 
 
-def nn_process_diagram(_graph, _optimizer, _loss, weights, biases,_train_prediction, _cv_prediction, _cv_label_set, _test_prediction, _test_label_set,
+def nn_process_diagram(_saver, _graph, _optimizer, _loss, weights, biases,_train_prediction, _cv_prediction, _cv_label_set, _test_prediction, _test_label_set,
                        _train_data_set, _train_label_set, _tf_train_dataset, _tf_train_labels, _lambda_regular):
     """Process the tensorflow diagram."""
 
+    checkpoint_dir = './'
+
     with tf.Session(graph=_graph) as session:
         tf.global_variables_initializer().run()
-        print('Initialized')
-        for step in range(num_step):
-            offset = (step * batch_size) % (_train_label_set.shape[0] - batch_size) #128 256 ...
-            batch_data = _train_data_set[offset:(offset + batch_size)]
-            batch_label = train_label_set[offset:(offset + batch_size)]
-            feed_dict = {_tf_train_dataset : batch_data, _tf_train_labels : batch_label, _lambda_regular : 1e-2}  #0.001
-            _, l, predictions = session.run([_optimizer, _loss, _train_prediction], feed_dict=feed_dict)
 
-            if (step % 500 == 0) :
-                print("Minibatch loss at step %d: %f" % (step, l))
-                print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_label))
-                print("Validation accuracy: %.1f%%" % accuracy(
-                    _cv_prediction.eval(), _cv_label_set))
-        print("Weights: ", weights.eval())
-        print("Biases: ", biases.eval())
-        print("Test accuracy: %.1f%%" % accuracy(_test_prediction.eval(), _test_label_set))
+        if is_train_option:
+            print('Initialized')
+            for step in range(num_step):
+                offset = (step * batch_size) % (_train_label_set.shape[0] - batch_size) #128 256 ...
+                batch_data = _train_data_set[offset:(offset + batch_size)]
+                batch_label = train_label_set[offset:(offset + batch_size)]
+                feed_dict = {_tf_train_dataset : batch_data, _tf_train_labels : batch_label, _lambda_regular : 1e-2}  #0.001
+                _, l, predictions = session.run([_optimizer, _loss, _train_prediction], feed_dict=feed_dict)
+
+                if step % 500 == 0:
+                    print("Minibatch loss at step %d: %f" % (step, l))
+                    print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_label))
+                    print("Validation accuracy: %.1f%%" % accuracy( _cv_prediction.eval(), _cv_label_set))
+                    _saver.save(session, checkpoint_dir + 'buaann.ckpt', global_step=int(step/500))
+
+            print("Weights: ", weights.eval())
+            print("Biases: ", biases.eval())
+            print(_test_prediction.eval())
+            print("Test accuracy: %.1f%%" % accuracy(_test_prediction.eval(), _test_label_set))
+        else:
+            ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+            if ckpt and ckpt.model_checkpoint_path:
+                _saver.restore(session, ckpt.model_checkpoint_path)
+            else:
+                pass
+            print(session.run(weights))
+            print(session.run(biases))
 
 if __name__ == '__main__':
     train_data_set, train_label_set, cv_data_set, cv_label_set, \
@@ -99,13 +117,13 @@ if __name__ == '__main__':
         = init_dataset()
 
 
-    graph, optimizer, loss, weights, biases, train_prediction, cv_prediction, \
+    saver, graph, optimizer, loss, weights, biases, train_prediction, cv_prediction, \
     test_prediction, tf_train_dataset, tf_train_labels, \
     lambda_regular \
         = nn_diagram_define(cv_data_set,
                             test_data_set)
 
-    nn_process_diagram(graph, optimizer, loss, weights, biases, train_prediction,
+    nn_process_diagram(saver, graph, optimizer, loss, weights, biases, train_prediction,
                        cv_prediction, cv_label_set, test_prediction, test_label_set, train_data_set,
                        train_label_set, tf_train_dataset, tf_train_labels,
                        lambda_regular)
