@@ -45,6 +45,20 @@ def accuracy(prediction, labels):
     return (100.0 * np.sum(np.argmax(prediction, 1) == np.argmax(labels, 1))) / (prediction.shape[0])
 
 
+def variable_summaries(var):
+    """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+    with tf.name_scope('summaries'):
+        mean = tf.reduce_mean(var)
+        tf.summary.scalar('mean', mean)
+        with tf.name_scope('stddev'):
+            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+        tf.summary.scalar('stddev', stddev)
+        tf.summary.scalar('max', tf.reduce_max(var))
+        tf.summary.scalar('min', tf.reduce_min(var))
+        tf.summary.histogram('histogram', var)
+
+
+
 def nn_diagram_define(_cv_data_set, _test_data_set):
     """Define the tensorflow diagram architecture."""
 
@@ -57,14 +71,22 @@ def nn_diagram_define(_cv_data_set, _test_data_set):
         tf_cv_dataset = tf.constant(_cv_data_set)
         tf_test_dataset = tf.constant(_test_data_set)
 
-        weights = tf.Variable(tf.truncated_normal([attr_num, label_num]))  # random initialize the weight
-        biases = tf.Variable(tf.zeros([label_num]))
-
-        logits = tf.matmul(_tf_train_dataset, weights) + biases  # softmax layer
-        _loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=_tf_train_labels, logits=logits)) + \
-            _lambda_regular * tf.nn.l2_loss(weights)
-
-        _optimizer = tf.train.GradientDescentOptimizer(0.1).minimize(_loss)
+        with tf.name_scope('Layer_1'):
+            with tf.name_scope('weights'):
+                weights = tf.Variable(tf.truncated_normal([attr_num, label_num]))  # random initialize the weight
+                variable_summaries(weights)
+            with tf.name_scope('biases'):
+                biases = tf.Variable(tf.zeros([label_num]))
+                variable_summaries(biases)
+            with tf.name_scope('Wx_Plus_b'):
+                logits = tf.matmul(_tf_train_dataset, weights) + biases  # softmax layer
+                tf.summary.histogram('logits', logits)
+            with tf.name_scope('cross_entropy'):
+                _loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=_tf_train_labels, logits=logits)) + \
+                    _lambda_regular * tf.nn.l2_loss(weights)
+            tf.summary.scalar('cross_entropy', _loss)
+            with tf.name_scope('train'):
+                _optimizer = tf.train.GradientDescentOptimizer(0.1).minimize(_loss)
 
         _train_prediction = tf.nn.softmax(logits)
         _cv_prediction = tf.nn.softmax(tf.matmul(tf_cv_dataset, weights) + biases)
@@ -72,38 +94,44 @@ def nn_diagram_define(_cv_data_set, _test_data_set):
 
         _saver = tf.train.Saver()
 
-        return _saver, _graph, _optimizer, _loss, weights, biases, _train_prediction, _cv_prediction, _test_prediction, _tf_train_dataset, _tf_train_labels, _lambda_regular
+        return _saver, _graph, _optimizer, _loss, weights, biases, _train_prediction, _cv_prediction, _test_prediction, _tf_train_dataset, _tf_train_labels,tf_test_dataset ,_lambda_regular
 
 
 def nn_process_diagram(_saver, _graph, _optimizer, _loss, weights, biases,_train_prediction, _cv_prediction, _cv_label_set, _test_prediction, _test_label_set,
-                       _train_data_set, _train_label_set, _tf_train_dataset, _tf_train_labels, _lambda_regular):
+                       _train_data_set, _train_label_set, _tf_train_dataset, _tf_train_labels,_tf_test_dataset , _lambda_regular):
     """Process the tensorflow diagram."""
 
     checkpoint_dir = './checkpoint/'
+    summaries_dir = './summaries/'
 
     with tf.Session(graph=_graph) as session:
+        merged_summary_op = tf.summary.merge_all()
+        train_writer = tf.summary.FileWriter(summaries_dir + '/train', session.graph)
+
         tf.global_variables_initializer().run()
 
-        if is_train_option:
+        if is_train_option:  # Training process.
             print('Initialized')
             for step in range(num_step):
                 offset = (step * batch_size) % (_train_label_set.shape[0] - batch_size) #128 256 ...
                 batch_data = _train_data_set[offset:(offset + batch_size)]
-                batch_label = train_label_set[offset:(offset + batch_size)]
+                batch_label = _train_label_set[offset:(offset + batch_size)]
                 feed_dict = {_tf_train_dataset : batch_data, _tf_train_labels : batch_label, _lambda_regular : 1e-2}  #0.001
-                _, l, predictions = session.run([_optimizer, _loss, _train_prediction], feed_dict=feed_dict)
+                summary, optim, l, predictions = session.run([merged_summary_op, _optimizer, _loss, _train_prediction], feed_dict=feed_dict)
+
 
                 if step % 500 == 0:
                     print("Minibatch loss at step %d: %f" % (step, l))
                     print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_label))
-                    print("Validation accuracy: %.1f%%" % accuracy( _cv_prediction.eval(), _cv_label_set))
+                    print("Validation accuracy: %.1f%%" % accuracy(_cv_prediction.eval(), _cv_label_set))
                     _saver.save(session, checkpoint_dir + 'buaann.ckpt', global_step=int(step/500))
 
+                train_writer.add_summary(summary, step)
             print("Weights: ", weights.eval())
             print("Biases: ", biases.eval())
             print(_test_prediction.eval())
             print("Test accuracy: %.1f%%" % accuracy(_test_prediction.eval(), _test_label_set))
-        else:
+        else:  # Using model process.
             ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
             if ckpt and ckpt.model_checkpoint_path:
                 _saver.restore(session, ckpt.model_checkpoint_path)
@@ -111,6 +139,9 @@ def nn_process_diagram(_saver, _graph, _optimizer, _loss, weights, biases,_train
                 pass
             print(session.run(weights))
             print(session.run(biases))
+            test_prediction = tf.nn.softmax(tf.matmul(_tf_test_dataset, weights) + biases)
+            print(np.argmax(test_prediction.eval(), 1))
+
 
 if __name__ == '__main__':
     train_data_set, train_label_set, cv_data_set, cv_label_set, \
@@ -119,14 +150,14 @@ if __name__ == '__main__':
 
 
     saver, graph, optimizer, loss, weights, biases, train_prediction, cv_prediction, \
-    test_prediction, tf_train_dataset, tf_train_labels, \
+    test_prediction, tf_train_dataset, tf_train_labels, tf_test_dataset, \
     lambda_regular \
         = nn_diagram_define(cv_data_set,
                             test_data_set)
 
     nn_process_diagram(saver, graph, optimizer, loss, weights, biases, train_prediction,
                        cv_prediction, cv_label_set, test_prediction, test_label_set, train_data_set,
-                       train_label_set, tf_train_dataset, tf_train_labels,
+                       train_label_set, tf_train_dataset, tf_train_labels, tf_test_dataset,
                        lambda_regular)
 
 
