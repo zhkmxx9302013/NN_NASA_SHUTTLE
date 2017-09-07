@@ -40,9 +40,9 @@ def init_dataset():
     return _train_data_set, _train_label_set, _cv_data_set, _cv_label_set, _test_data_set, _test_label_set
 
 
-def accuracy(prediction, labels):
-    """Calculate the accuracy of the model."""
-    return (100.0 * np.sum(np.argmax(prediction, 1) == np.argmax(labels, 1))) / (prediction.shape[0])
+# def accuracy(prediction, labels):
+#     """Calculate the accuracy of the model."""
+#     return (100.0 * np.sum(np.argmax(prediction, 1) == np.argmax(labels, 1))) / (prediction.shape[0])
 
 
 def variable_summaries(var):
@@ -59,7 +59,7 @@ def variable_summaries(var):
 
 
 
-def nn_diagram_define(_cv_data_set, _test_data_set):
+def nn_diagram_define(_cv_data_set, _test_data_set, _train_label_set, _cv_label_set, _test_label_set):
     """Define the tensorflow diagram architecture."""
 
     _graph = tf.Graph()
@@ -92,12 +92,33 @@ def nn_diagram_define(_cv_data_set, _test_data_set):
         _cv_prediction = tf.nn.softmax(tf.matmul(tf_cv_dataset, weights) + biases)
         _test_prediction = tf.nn.softmax(tf.matmul(tf_test_dataset, weights) + biases)
 
+        with tf.name_scope('train_accuracy'):
+            with tf.name_scope('train_correct_prediction'):
+                correct_prediction = tf.equal(tf.argmax(_train_prediction, 1), tf.argmax(_tf_train_labels, 1))
+            with tf.name_scope('train_accuracy'):
+                _train_accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))* 100.0
+        tf.summary.scalar('train_accuracy', _train_accuracy)
+
+        with tf.name_scope('cv_accuracy'):
+            with tf.name_scope('cv_correct_prediction'):
+                cv_correct_prediction = tf.equal(tf.argmax(_cv_prediction, 1), tf.argmax(_cv_label_set, 1))
+            with tf.name_scope('cv_accuracy'):
+                _cv_accuracy = tf.reduce_mean(tf.cast(cv_correct_prediction, tf.float32))* 100.0
+        tf.summary.scalar('cv_accuracy', _cv_accuracy)
+
+        with tf.name_scope('test_accuracy'):
+            with tf.name_scope('test_correct_prediction'):
+                test_correct_prediction = tf.equal(tf.argmax(_test_prediction, 1), tf.argmax(_test_label_set, 1))
+            with tf.name_scope('test_accuracy'):
+                _test_accuracy = tf.reduce_mean(tf.cast(test_correct_prediction, tf.float32)) * 100.0
+        tf.summary.scalar('test_accuracy', _test_accuracy)
+
         _saver = tf.train.Saver()
 
-        return _saver, _graph, _optimizer, _loss, weights, biases, _train_prediction, _cv_prediction, _test_prediction, _tf_train_dataset, _tf_train_labels,tf_test_dataset ,_lambda_regular
+        return _test_accuracy, _cv_accuracy, _train_accuracy, _saver, _graph, _optimizer, _loss, weights, biases, _train_prediction, _cv_prediction, _test_prediction, _tf_train_dataset, _tf_train_labels,tf_test_dataset ,_lambda_regular
 
 
-def nn_process_diagram(_saver, _graph, _optimizer, _loss, weights, biases,_train_prediction, _cv_prediction, _cv_label_set, _test_prediction, _test_label_set,
+def nn_process_diagram(_test_accuracy, _cv_accuracy, _train_accuracy, _saver, _graph, _optimizer, _loss, weights, biases,_train_prediction, _cv_prediction, _cv_label_set, _test_prediction, _test_label_set,
                        _train_data_set, _train_label_set, _tf_train_dataset, _tf_train_labels,_tf_test_dataset , _lambda_regular):
     """Process the tensorflow diagram."""
 
@@ -116,21 +137,20 @@ def nn_process_diagram(_saver, _graph, _optimizer, _loss, weights, biases,_train
                 offset = (step * batch_size) % (_train_label_set.shape[0] - batch_size) #128 256 ...
                 batch_data = _train_data_set[offset:(offset + batch_size)]
                 batch_label = _train_label_set[offset:(offset + batch_size)]
-                feed_dict = {_tf_train_dataset : batch_data, _tf_train_labels : batch_label, _lambda_regular : 1e-2}  #0.001
-                summary, optim, l, predictions = session.run([merged_summary_op, _optimizer, _loss, _train_prediction], feed_dict=feed_dict)
-
+                feed_dict = {_tf_train_dataset : batch_data, _tf_train_labels : batch_label, _lambda_regular : 2e-2}  #0.001
+                test_acc, cv_acc, train_acc, summary, optim, l, predictions = session.run([_test_accuracy, _cv_accuracy, _train_accuracy, merged_summary_op, _optimizer, _loss, _train_prediction], feed_dict=feed_dict)
 
                 if step % 500 == 0:
                     print("Minibatch loss at step %d: %f" % (step, l))
-                    print("Minibatch accuracy: %.1f%%" % accuracy(predictions, batch_label))
-                    print("Validation accuracy: %.1f%%" % accuracy(_cv_prediction.eval(), _cv_label_set))
+                    print("Minibatch accuracy: %.1f%%" % test_acc)
+                    print("Validation accuracy: %.1f%%" % cv_acc)
                     _saver.save(session, checkpoint_dir + 'buaann.ckpt', global_step=int(step/500))
 
                 train_writer.add_summary(summary, step)
             print("Weights: ", weights.eval())
             print("Biases: ", biases.eval())
             print(_test_prediction.eval())
-            print("Test accuracy: %.1f%%" % accuracy(_test_prediction.eval(), _test_label_set))
+            print("Test accuracy: %.1f%%" % test_acc)
         else:  # Using model process.
             ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
             if ckpt and ckpt.model_checkpoint_path:
@@ -149,13 +169,13 @@ if __name__ == '__main__':
         = init_dataset()
 
 
-    saver, graph, optimizer, loss, weights, biases, train_prediction, cv_prediction, \
+    test_accuracy, cv_accuracy,train_accuracy, saver, graph, optimizer, loss, weights, biases, train_prediction, cv_prediction, \
     test_prediction, tf_train_dataset, tf_train_labels, tf_test_dataset, \
     lambda_regular \
         = nn_diagram_define(cv_data_set,
-                            test_data_set)
+                            test_data_set, train_label_set, cv_label_set, test_label_set)
 
-    nn_process_diagram(saver, graph, optimizer, loss, weights, biases, train_prediction,
+    nn_process_diagram(test_accuracy, cv_accuracy, train_accuracy, saver, graph, optimizer, loss, weights, biases, train_prediction,
                        cv_prediction, cv_label_set, test_prediction, test_label_set, train_data_set,
                        train_label_set, tf_train_dataset, tf_train_labels, tf_test_dataset,
                        lambda_regular)
